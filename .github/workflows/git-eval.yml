@@ -20,39 +20,90 @@ jobs:
           SCORE=0
           FEEDBACK=""
 
-          # Check 1: setup-prompt.sh exists (20pts)
-          if [ -f setup-prompt.sh ]; then
+          # Detect script type
+          HAS_PS1=false
+          HAS_SH=false
+          [ -f task.ps1 ] && HAS_PS1=true
+          [ -f task.sh ] && HAS_SH=true
+
+          # Check 1: Script file exists (20pts)
+          if [ "$HAS_PS1" = true ] || [ "$HAS_SH" = true ]; then
             SCORE=$((SCORE + 20))
-            FEEDBACK="${FEEDBACK}✅ setup-prompt.sh が存在します\n"
+            if [ "$HAS_PS1" = true ]; then
+              FEEDBACK="${FEEDBACK}✅ task.ps1 が存在します\n"
+              SCRIPT="task.ps1"
+            else
+              FEEDBACK="${FEEDBACK}✅ task.sh が存在します\n"
+              SCRIPT="task.sh"
+            fi
           else
-            FEEDBACK="${FEEDBACK}❌ setup-prompt.sh が見つかりません\n"
+            FEEDBACK="${FEEDBACK}❌ task.ps1 または task.sh が見つかりません\n"
+            SCRIPT=""
           fi
 
-          # Check 2: Valid bash syntax (20pts)
-          if [ -f setup-prompt.sh ] && bash -n setup-prompt.sh 2>/dev/null; then
-            SCORE=$((SCORE + 20))
-            FEEDBACK="${FEEDBACK}✅ bash 構文チェック OK\n"
-          else
-            FEEDBACK="${FEEDBACK}❌ bash 構文エラーがあります\n"
+          # Check 2: Valid syntax (20pts)
+          if [ "$HAS_SH" = true ]; then
+            if bash -n task.sh 2>/dev/null; then
+              SCORE=$((SCORE + 20))
+              FEEDBACK="${FEEDBACK}✅ bash 構文チェック OK\n"
+            else
+              FEEDBACK="${FEEDBACK}❌ bash 構文エラーがあります\n"
+            fi
+          elif [ "$HAS_PS1" = true ]; then
+            # PowerShell syntax check not available on ubuntu, give points if file is non-empty
+            if [ -s task.ps1 ]; then
+              SCORE=$((SCORE + 20))
+              FEEDBACK="${FEEDBACK}✅ task.ps1 の内容を確認しました\n"
+            else
+              FEEDBACK="${FEEDBACK}❌ task.ps1 が空です\n"
+            fi
           fi
 
-          # Check 3: PS1 is set (20pts)
-          if [ -f setup-prompt.sh ] && grep -q 'PS1=' setup-prompt.sh; then
-            SCORE=$((SCORE + 20))
-            FEEDBACK="${FEEDBACK}✅ PS1 が設定されています\n"
-          else
-            FEEDBACK="${FEEDBACK}❌ PS1 が設定されていません\n"
+          # Check 3: mkdir command (10pts)
+          if [ -n "$SCRIPT" ]; then
+            if grep -qiE '(mkdir|New-Item.*Directory)' "$SCRIPT"; then
+              SCORE=$((SCORE + 10))
+              FEEDBACK="${FEEDBACK}✅ ディレクトリ作成コマンドあり\n"
+            else
+              FEEDBACK="${FEEDBACK}❌ mkdir / New-Item が見つかりません\n"
+            fi
           fi
 
-          # Check 4: No CRLF (20pts)
-          if grep -rPl '\r$' --include='*.sh' --include='*.txt' --include='*.md' . 2>/dev/null | grep -q .; then
-            FEEDBACK="${FEEDBACK}❌ CRLF 改行が検出されました\n"
-          else
-            SCORE=$((SCORE + 20))
-            FEEDBACK="${FEEDBACK}✅ 改行コード OK (LF)\n"
+          # Check 4: File operations (10pts)
+          if [ -n "$SCRIPT" ]; then
+            if grep -qiE '(cp |mv |echo .+>|Copy-Item|Move-Item|Out-File|Set-Content|New-Item.*File)' "$SCRIPT"; then
+              SCORE=$((SCORE + 10))
+              FEEDBACK="${FEEDBACK}✅ ファイル操作コマンドあり\n"
+            else
+              FEEDBACK="${FEEDBACK}❌ ファイル操作コマンドが見つかりません (cp, mv, echo > 等)\n"
+            fi
           fi
 
-          # Check 5: At least 2 commits (10pts)
+          # Check 5: List command (10pts)
+          if [ -n "$SCRIPT" ]; then
+            if grep -qiE '(ls|dir|Get-ChildItem)' "$SCRIPT"; then
+              SCORE=$((SCORE + 10))
+              FEEDBACK="${FEEDBACK}✅ 一覧表示コマンドあり\n"
+            else
+              FEEDBACK="${FEEDBACK}❌ ls / Get-ChildItem が見つかりません\n"
+            fi
+          fi
+
+          # Check 6: No CRLF in .sh files (10pts)
+          if [ "$HAS_SH" = true ]; then
+            if grep -Pl '\r$' task.sh 2>/dev/null | grep -q .; then
+              FEEDBACK="${FEEDBACK}❌ task.sh に CRLF 改行が含まれています\n"
+            else
+              SCORE=$((SCORE + 10))
+              FEEDBACK="${FEEDBACK}✅ 改行コード OK\n"
+            fi
+          elif [ "$HAS_PS1" = true ]; then
+            # PS1 on Windows: CRLF is acceptable
+            SCORE=$((SCORE + 10))
+            FEEDBACK="${FEEDBACK}✅ PowerShell スクリプト: 改行コードチェック不要\n"
+          fi
+
+          # Check 7: At least 2 commits (10pts)
           COMMIT_COUNT=$(git rev-list --count HEAD)
           if [ "$COMMIT_COUNT" -ge 2 ]; then
             SCORE=$((SCORE + 10))
@@ -61,12 +112,11 @@ jobs:
             FEEDBACK="${FEEDBACK}❌ コミットが 2 つ以上必要です (現在: ${COMMIT_COUNT})\n"
           fi
 
-          # Check 6: Meaningful commit messages (10pts)
-          BAD_MSGS=$(git log --format='%s' | grep -ciE '^(initial commit|update|fix|test|asdf|aaa)$' || true)
-          TOTAL_MSGS=$(git rev-list --count HEAD)
-          if [ "$BAD_MSGS" -lt "$TOTAL_MSGS" ] && [ "$TOTAL_MSGS" -gt 0 ]; then
+          # Check 8: Meaningful commit messages (10pts)
+          BAD_MSGS=$(git log --format='%s' | grep -ciE '^(initial commit|update|fix|test|asdf|aaa|wip|tmp|\.+)$' || true)
+          if [ "$BAD_MSGS" -lt "$COMMIT_COUNT" ] && [ "$COMMIT_COUNT" -gt 0 ]; then
             SCORE=$((SCORE + 10))
-            FEEDBACK="${FEEDBACK}✅ コミットメッセージが意味のある内容です\n"
+            FEEDBACK="${FEEDBACK}✅ コミットメッセージ OK\n"
           else
             FEEDBACK="${FEEDBACK}❌ コミットメッセージを具体的に書きましょう\n"
           fi
